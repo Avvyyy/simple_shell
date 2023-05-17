@@ -8,11 +8,11 @@ char *get_line(void)
     printf("$ ");
     fflush(stdout);
 
-    if(getline(&buffer, &buffer_len, stdin) == -1)
+    if (getline(&buffer, &buffer_len, stdin) == -1)
     {
         perror("getline");
         exit(EXIT_FAILURE);
     }
 
-    return (buffer);
+    return buffer;
 }
