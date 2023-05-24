@@ -1,112 +1,183 @@
-#include "shell.h"
+#include "main.h"
 
 /**
- * expand_variables - expand variables
- * @data: a pointer to a struct of the program's data.
+ * check_env - checks if the typed variable is an env variable
  *
- * Return: nothing, but sets errno.
+ * @h: head of linked list
+ * @in: input string
+ * @data: data structure
+ * Return: no return
  */
-void expand_variables(data_of_program *data)
+void check_env(r_var **h, char *in, data_shell *data)
 {
-	int i, j;
-	char line[BUFFER_SIZE] = {0}, expansion[BUFFER_SIZE] = {'\0'}, *temp;
+	int row, chr, j, lval;
+	char **_envr;
 
-	if (data->input_line == NULL)
-		return;
-	buffer_add(line, data->input_line);
-	for (i = 0; line[i]; i++)
-		if (line[i] == '#')
-			line[i--] = '\0';
-		else if (line[i] == '$' && line[i + 1] == '?')
-		{
-			line[i] = '\0';
-			long_to_string(errno, expansion, 10);
-			buffer_add(line, expansion);
-			buffer_add(line, data->input_line + i + 2);
-		}
-		else if (line[i] == '$' && line[i + 1] == '$')
-		{
-			line[i] = '\0';
-			long_to_string(getpid(), expansion, 10);
-			buffer_add(line, expansion);
-			buffer_add(line, data->input_line + i + 2);
-		}
-		else if (line[i] == '$' && (line[i + 1] == ' ' || line[i + 1] == '\0'))
-			continue;
-		else if (line[i] == '$')
-		{
-			for (j = 1; line[i + j] && line[i + j] != ' '; j++)
-				expansion[j - 1] = line[i + j];
-			temp = env_get_key(expansion, data);
-			line[i] = '\0', expansion[0] = '\0';
-			buffer_add(expansion, line + i + j);
-			temp ? buffer_add(line, temp) : 1;
-			buffer_add(line, expansion);
-		}
-	if (!str_compare(data->input_line, line, 0))
+	_envr = data->_environ;
+	for (row = 0; _envr[row]; row++)
 	{
-		free(data->input_line);
-		data->input_line = str_duplicate(line);
+		for (j = 1, chr = 0; _envr[row][chr]; chr++)
+		{
+			if (_envr[row][chr] == '=')
+			{
+				lval = _strlen(_envr[row] + chr + 1);
+				add_rvar_node(h, j, _envr[row] + chr + 1, lval);
+				return;
+			}
+
+			if (in[j] == _envr[row][chr])
+				j++;
+			else
+				break;
+		}
 	}
+
+	for (j = 0; in[j]; j++)
+	{
+		if (in[j] == ' ' || in[j] == '\t' || in[j] == ';' || in[j] == '\n')
+			break;
+	}
+
+	add_rvar_node(h, j, NULL, 0);
 }
 
 /**
- * expand_alias - expans aliases
- * @data: a pointer to a struct of the program's data.
+ * check_vars - check if the typed variable is $$ or $?
  *
- * Return: nothing, but sets errno.
+ * @h: head of the linked list
+ * @in: input string
+ * @st: last status of the Shell
+ * @data: data structure
+ * Return: no return
  */
-void expand_alias(data_of_program *data)
+int check_vars(r_var **h, char *in, char *st, data_shell *data)
 {
-	int i, j, was_expanded = 0;
-	char line[BUFFER_SIZE] = {0}, expansion[BUFFER_SIZE] = {'\0'}, *temp;
+	int i, lst, lpd;
 
-	if (data->input_line == NULL)
-		return;
+	lst = _strlen(st);
+	lpd = _strlen(data->pid);
 
-	buffer_add(line, data->input_line);
-
-	for (i = 0; line[i]; i++)
+	for (i = 0; in[i]; i++)
 	{
-		for (j = 0; line[i + j] && line[i + j] != ' '; j++)
-			expansion[j] = line[i + j];
-		expansion[j] = '\0';
-
-		temp = get_alias(data, expansion);
-		if (temp)
+		if (in[i] == '$')
 		{
-			expansion[0] = '\0';
-			buffer_add(expansion, line + i + j);
-			line[i] = '\0';
-			buffer_add(line, temp);
-			line[str_length(line)] = '\0';
-			buffer_add(line, expansion);
-			was_expanded = 1;
+			if (in[i + 1] == '?')
+				add_rvar_node(h, 2, st, lst), i++;
+			else if (in[i + 1] == '$')
+				add_rvar_node(h, 2, data->pid, lpd), i++;
+			else if (in[i + 1] == '\n')
+				add_rvar_node(h, 0, NULL, 0);
+			else if (in[i + 1] == '\0')
+				add_rvar_node(h, 0, NULL, 0);
+			else if (in[i + 1] == ' ')
+				add_rvar_node(h, 0, NULL, 0);
+			else if (in[i + 1] == '\t')
+				add_rvar_node(h, 0, NULL, 0);
+			else if (in[i + 1] == ';')
+				add_rvar_node(h, 0, NULL, 0);
+			else
+				check_env(h, in + i, data);
 		}
-		break;
 	}
-	if (was_expanded)
-	{
-		free(data->input_line);
-		data->input_line = str_duplicate(line);
-	}
+
+	return (i);
 }
 
 /**
- * buffer_add - append string at end of the buffer
- * @buffer: buffer to be filled.
- * @str_to_add: string to be copied in the buffer.
- * Return: nothing, but sets errno.
+ * replaced_input - replaces string into variables
+ *
+ * @head: head of the linked list
+ * @input: input string
+ * @new_input: new input string (replaced)
+ * @nlen: new length
+ * Return: replaced string
  */
-int buffer_add(char *buffer, char *str_to_add)
+char *replaced_input(r_var **head, char *input, char *new_input, int nlen)
 {
-	int length, i;
+	r_var *indx;
+	int i, j, k;
 
-	length = str_length(buffer);
-	for (i = 0; str_to_add[i]; i++)
+	indx = *head;
+	for (j = i = 0; i < nlen; i++)
 	{
-		buffer[length + i] = str_to_add[i];
+		if (input[j] == '$')
+		{
+			if (!(indx->len_var) && !(indx->len_val))
+			{
+				new_input[i] = input[j];
+				j++;
+			}
+			else if (indx->len_var && !(indx->len_val))
+			{
+				for (k = 0; k < indx->len_var; k++)
+					j++;
+				i--;
+			}
+			else
+			{
+				for (k = 0; k < indx->len_val; k++)
+				{
+					new_input[i] = indx->val[k];
+					i++;
+				}
+				j += (indx->len_var);
+				i--;
+			}
+			indx = indx->next;
+		}
+		else
+		{
+			new_input[i] = input[j];
+			j++;
+		}
 	}
-	buffer[length + i] = '\0';
-	return (length + i);
+
+	return (new_input);
+}
+
+/**
+ * rep_var - calls functions to replace string into vars
+ *
+ * @input: input string
+ * @datash: data structure
+ * Return: replaced string
+ */
+char *rep_var(char *input, data_shell *datash)
+{
+	r_var *head, *indx;
+	char *status, *new_input;
+	int olen, nlen;
+
+	status = aux_itoa(datash->status);
+	head = NULL;
+
+	olen = check_vars(&head, input, status, datash);
+
+	if (head == NULL)
+	{
+		free(status);
+		return (input);
+	}
+
+	indx = head;
+	nlen = 0;
+
+	while (indx != NULL)
+	{
+		nlen += (indx->len_val - indx->len_var);
+		indx = indx->next;
+	}
+
+	nlen += olen;
+
+	new_input = malloc(sizeof(char) * (nlen + 1));
+	new_input[nlen] = '\0';
+
+	new_input = replaced_input(&head, input, new_input, nlen);
+
+	free(input);
+	free(status);
+	free_rvar_list(&head);
+
+	return (new_input);
 }
